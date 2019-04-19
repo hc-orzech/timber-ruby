@@ -1,10 +1,10 @@
 require "spec_helper"
 
-describe Timber::Logger, :rails_23 => true do
+describe Timber::Logger do
   describe "#initialize" do
     it "shoud select the augmented formatter" do
       logger = described_class.new(nil)
-      expect(logger.formatter).to be_kind_of(Timber::Logger::AugmentedFormatter)
+      expect(logger.formatter).to be_kind_of(Timber::Logger::JSONFormatter)
     end
 
     context "development environment" do
@@ -24,10 +24,10 @@ describe Timber::Logger, :rails_23 => true do
     it "should allow multiple io devices" do
       io1 = StringIO.new
       io2 = StringIO.new
-      logger = Timber::Logger.new(STDOUT, io1, io2)
+      logger = Timber::Logger.new(io1, io2)
       logger.info("hello world")
-      expect(io1.string).to start_with("hello world @metadata {")
-      expect(io2.string).to start_with("hello world @metadata {")
+      expect(io1.string).to include("hello world")
+      expect(io2.string).to include("hello world")
     end
 
     it "should allow multiple io devices and loggers" do
@@ -35,10 +35,10 @@ describe Timber::Logger, :rails_23 => true do
       io2 = StringIO.new
       io3 = StringIO.new
       extra_logger = ::Logger.new(io3)
-      logger = Timber::Logger.new(STDOUT, io1, io2, extra_logger)
+      logger = Timber::Logger.new(io1, io2, extra_logger)
       logger.info("hello world")
-      expect(io1.string).to start_with("hello world @metadata {")
-      expect(io2.string).to start_with("hello world @metadata {")
+      expect(io1.string).to include("hello world")
+      expect(io2.string).to include("hello world")
       expect(io3.string).to end_with("hello world\n")
     end
   end
@@ -88,7 +88,7 @@ describe Timber::Logger, :rails_23 => true do
 
       it "should accept non-strings" do
         logger.info(true)
-        expect(io.string).to start_with("true @metadata")
+        expect(io.string).to include("true")
       end
 
       context "with a context" do
@@ -101,10 +101,11 @@ describe Timber::Logger, :rails_23 => true do
           )
         end
 
-        around(:each) do |example|
-          Timber::CurrentContext.with(http_context) do
-            example.run
-          end
+        before(:each) do |example|
+          Timber::CurrentContext.add(http_context)
+        end
+        after(:each) do |example|
+          Timber::CurrentContext.remove(:http)
         end
 
         it "should snapshot and include the context" do
@@ -115,19 +116,11 @@ describe Timber::Logger, :rails_23 => true do
         end
       end
 
-      it "should call and use Timber::Events.build" do
+      it "should pass hash as metadata" do
         message = {message: "payment rejected", payment_rejected: {customer_id: "abcde1234", amount: 100}}
-        expect(Timber::Events).to receive(:build).with(message).and_call_original
         logger.info(message)
         expect(io.string).to start_with("payment rejected @metadata {\"level\":\"info\",\"dt\":\"2016-09-01T12:00:00.000000Z\",")
-        expect(io.string).to include("\"event\":{\"custom\":{\"payment_rejected\":{\"customer_id\":\"abcde1234\",\"amount\":100}}}")
-      end
-
-      it "should log properly when a Timber::Event object is passed" do
-        message = Timber::Events::SQLQuery.new(sql: "select * from users", time_ms: 56, message: "select * from users")
-        logger.info(message)
-        expect(io.string).to start_with("select * from users @metadata {\"level\":\"info\",\"dt\":\"2016-09-01T12:00:00.000000Z\",")
-        expect(io.string).to include("\"event\":{\"sql_query\":{\"sql\":\"select * from users\",\"time_ms\":56.0}}")
+        expect(io.string).to include("\"payment_rejected\":{\"customer_id\":\"abcde1234\",\"amount\":100}")
       end
 
       it "should allow :tag" do
@@ -149,7 +142,7 @@ describe Timber::Logger, :rails_23 => true do
           {message: "payment rejected", payment_rejected: {customer_id: "abcde1234", amount: 100}}
         end
         expect(io.string).to start_with("payment rejected @metadata {\"level\":\"info\",\"dt\":\"2016-09-01T12:00:00.000000Z\",")
-        expect(io.string).to include("\"event\":{\"custom\":{\"payment_rejected\":{\"customer_id\":\"abcde1234\",\"amount\":100}}}")
+        expect(io.string).to include("\"payment_rejected\":{\"customer_id\":\"abcde1234\",\"amount\":100}")
       end
 
       it "should escape new lines" do
@@ -181,14 +174,14 @@ describe Timber::Logger, :rails_23 => true do
     let(:logger) { Timber::Logger.new(io) }
 
     it "should allow default usage" do
-      logger.error("message")
-      expect(io.string).to start_with("message @metadata")
+      logger.error("log message")
+      expect(io.string).to include("log message")
       expect(io.string).to include('"level":"error"')
     end
 
     it "should allow messages with options" do
-      logger.error("message", tag: "tag")
-      expect(io.string).to start_with("message @metadata")
+      logger.error("log message", tag: "tag")
+      expect(io.string).to include("log message")
       expect(io.string).to include('"level":"error"')
       expect(io.string).to include('"tags":["tag"]')
     end
@@ -214,55 +207,21 @@ describe Timber::Logger, :rails_23 => true do
     let(:logger) { Timber::Logger.new(io) }
 
     it "should allow default usage" do
-      logger.info("message")
-      expect(io.string).to start_with("message @metadata")
+      logger.info("log message")
+      expect(io.string).to include("log message")
       expect(io.string).to include('"level":"info"')
     end
 
     it "should allow messages with options" do
-      logger.info("message", tag: "tag")
-      expect(io.string).to start_with("message @metadata")
+      logger.info("log message", tag: "tag")
+      expect(io.string).to include("log message")
       expect(io.string).to include('"level":"info"')
       expect(io.string).to include('"tags":["tag"]')
     end
 
     it "should accept non-string messages" do
       logger.info(true)
-      expect(io.string).to start_with("true @metadata")
-    end
-  end
-
-  describe "#silence" do
-    let(:io) { StringIO.new }
-    let(:logger) { Timber::Logger.new(io) }
-
-    it "should silence the logs" do
-      logger.silence do
-        logger.info("test")
-      end
-
-      expect(io.string).to eq("")
-    end
-  end
-
-  describe "#with_context" do
-    let(:io) { StringIO.new }
-    let(:logger) { Timber::Logger.new(io) }
-
-    it "should add context" do
-      expect(Timber::CurrentContext.instance.send(:hash)[:custom]).to be_nil
-
-      logger.with_context(build: {version: "1.0.0"}) do
-        expect(Timber::CurrentContext.instance.send(:hash)[:custom]).to eq({:build=>{:version=>"1.0.0"}})
-
-        logger.with_context({testing: {key: "value"}}) do
-          expect(Timber::CurrentContext.instance.send(:hash)[:custom]).to eq({:build=>{:version=>"1.0.0"}, :testing=>{:key=>"value"}})
-        end
-
-        expect(Timber::CurrentContext.instance.send(:hash)[:custom]).to eq({:build=>{:version=>"1.0.0"}})
-      end
-
-      expect(Timber::CurrentContext.instance.send(:hash)[:custom]).to be_nil
+      expect(io.string).to include("true")
     end
   end
 end

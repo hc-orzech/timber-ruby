@@ -1,8 +1,6 @@
 require "socket"
 
 require "timber/config"
-require "timber/contexts/release"
-require "timber/contexts/system"
 
 module Timber
   # Holds the current context in a thread safe memory storage. This context is
@@ -19,11 +17,6 @@ module Timber
       # its own context.
       def instance
         Thread.current[THREAD_NAMESPACE] ||= new
-      end
-
-      # Convenience method for {CurrentContext#with}. See {CurrentContext#with} for more info.
-      def with(*args, &block)
-        instance.with(*args, &block)
       end
 
       # Convenience method for {CurrentContext#add}. See {CurrentContext#add} for more info.
@@ -45,6 +38,60 @@ module Timber
       def reset(*args)
         instance.reset(*args)
       end
+
+      # Convenience method for {CurrentContext#with}. See {CurrentContext#with} for more info.
+      def with(*args, &block)
+        instance.with(*args, &block)
+      end
+    end
+
+    # Adds contexts but does not remove them. See {#with} for automatic maintenance and {#remove}
+    # to remove them yourself.
+    #
+    # @note Because context is included with every log line, it is recommended that you limit this
+    #   to only neccessary data.
+    def add(*objects)
+      objects.each do |object|
+        hash.merge!(object.to_hash)
+      end
+      expire_cache!
+      self
+    end
+
+    # Fetch a specific context by key.
+    def fetch(*args)
+      hash.fetch(*args)
+    end
+
+    # Removes a context. If you wish to remove by key, or some other way, use {#hash} and
+    # modify the hash accordingly.
+    def remove(*keys)
+      keys.each do |keys|
+        hash.delete(keys)
+      end
+      expire_cache!
+      self
+    end
+
+    def replace(hash)
+      @hash = hash
+      expire_cache!
+      self
+    end
+
+    # Resets the context to be blank. Use this carefully! This will remove *any* context,
+    # include context that is automatically included with Timber.
+    def reset
+      hash.clear
+      expire_cache!
+      self
+    end
+
+    # Snapshots the current context so that you get a moment in time representation of the context,
+    # since the context can change as execution proceeds. Note that individual contexts
+    # should be immutable, and we implement snapshot caching as a result of this assumption.
+    def snapshot
+      @snapshot ||= hash.clone
     end
 
     # Adds a context and then removes it when the block is finished executing.
@@ -67,72 +114,12 @@ module Timber
     # @example Adding multiple contexts
     #   Timber::CurrentContext.with(context1, context2) { ... }
     def with(*objects)
-      add(*objects)
-      yield
-    ensure
-      remove(*objects)
-    end
-
-    # Adds contexts but does not remove them. See {#with} for automatic maintenance and {#remove}
-    # to remove them yourself.
-    #
-    # @note Because context is included with every log line, it is recommended that you limit this
-    #   to only neccessary data.
-    def add(*objects)
-      objects.each do |object|
-        add_to!(hash, object)
-      end
-      expire_cache!
-      self
-    end
-
-    # Fetch a specific context by key.
-    def fetch(*args)
-      hash.fetch(*args)
-    end
-
-    # Removes a context. If you wish to remove by key, or some other way, use {#hash} and
-    # modify the hash accordingly.
-    def remove(*objects)
-      objects.each do |object|
-        if object.is_a?(Symbol)
-          hash.delete(object)
-        else
-          context = Contexts.build(object)
-
-          if context.keyspace == :custom
-            # Custom contexts are merged and should be removed the same
-            hash[context.keyspace].delete(context.type)
-            if hash[context.keyspace] == {}
-              hash.delete(context.keyspace)
-            end
-          else
-            hash.delete(context.keyspace)
-          end
-        end
-      end
-      expire_cache!
-      self
-    end
-
-    # Resets the context to be blank. Use this carefully! This will remove *any* context,
-    # include context that is automatically included with Timber.
-    def reset
-      hash.clear
-      expire_cache!
-      self
-    end
-
-    # Snapshots the current context so that you get a moment in time representation of the context,
-    # since the context can change as execution proceeds. Note that individual contexts
-    # should be immutable, and we implement snapshot caching as a result of this assumption.
-    def snapshot
-      @snapshot ||= begin
-        snapshot = hash.clone
-        if snapshot.key?(:custom)
-          snapshot[:custom] = hash[:custom].clone
-        end
-        snapshot
+      old_hash = hash.clone
+      begin
+        add(*objects)
+        yield
+      ensure
+        replace(old_hash)
       end
     end
 
@@ -149,37 +136,28 @@ module Timber
         new_hash = {}
 
         # Release context
-        release_context = Contexts::Release.from_env
-        if release_context
-          add_to!(new_hash, release_context)
+        release_context = Util::NonNilHashBuilder.build do |h|
+          h.add(:commit_hash, ENV['RELEASE_COMMIT'] || ENV['HEROKU_SLUG_COMMIT'])
+          h.add(:created_at, ENV['RELEASE_CREATED_AT'] || ENV['HEROKU_RELEASE_CREATED_AT'])
+          h.add(:version, ENV['RELEASE_VERSION'] || ENV['HEROKU_RELEASE_VERSION'])
+        end
+
+        if release_context != {}
+          new_hash.merge!({release: release_context})
         end
 
         # System context
         hostname = Socket.gethostname
         pid = Process.pid
         system_context = Contexts::System.new(hostname: hostname, pid: pid)
-        add_to!(new_hash, system_context)
+        new_hash.merge!(system_context.to_hash)
 
         # Runtime context
         thread_object_id = Thread.current.object_id
-        runtime_context = Contexts::Runtime.new(vm_pid: thread_object_id)
-        add_to!(new_hash, runtime_context)
+        runtime_context = {thread_id: thread_object_id}
+        new_hash.merge!({runtime: runtime_context})
 
         new_hash
-      end
-
-      def add_to!(hash, object)
-        context = Contexts.build(object) # Normalizes objects into a Timber::Context descendant.
-        key = context.keyspace
-        json = context.as_json # Convert to json now so that we aren't doing it for every line
-        if key == :custom
-          # Custom contexts are merged into the space
-          hash[key] ||= {}
-          hash[key].merge!(json)
-        else
-          hash[key] = json
-        end
-        hash
       end
 
       # Hook to clear any caching implement in this class

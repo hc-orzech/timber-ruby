@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [3.0.1] - 2019-04-10
+
+### Fixed
+
+  - Fixed a bug where `Timber.with_context` was calling a non-existent method. [#205](https://github.com/timberio/timber-ruby/pull/205)
+
+## [3.0.0] - 2019-03-28
+
+### Changed
+
+  - Timber's Rails integration has been moved to the optional `timber_rails` gem: https://github.com/timberio/timber-ruby-rails
+  - Timber's Rack integration has been moved to the optional `timber_rack` gem: https://github.com/timberio/timber-ruby-rack
+  - Custom events are no longer nested under the `custom.event` key, events are now merged into the root document.
+  - Custom contexts are no longer nested under the `context.custom` key, contexts are not part of the top-level `context` document.
+  - The Timber JSON schema (`$shema` key) was dropped since the Timber.io service no longer requires a strict schema (structured data in any shape is accepted).
+  - `Timber::LogDevices::HTTP#initialize` now takes a second `source_id` parameter. Timber's new API keys are no longer Timber source specific and therefore require a `source_id` to be specificed. Ex: `Timber::LogDevices::HTTP.new('api_key', 'source_id')`.
+
 ## [2.6.2] - 2018-10-17
 
 ### Fixed
@@ -125,7 +142,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
     instead of applying back pressure.
 
 
-[Unreleased]: https://github.com/timberio/timber-ruby/compare/v2.6.1...HEAD
+[Unreleased]: https://github.com/timberio/timber-ruby/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/timberio/timber-ruby/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/timberio/timber-ruby/compare/v2.6.1...v3.0.0
 [2.6.1]: https://github.com/timberio/timber-ruby/compare/v2.6.0...v2.6.1
 [2.6.0]: https://github.com/timberio/timber-ruby/compare/v2.5.1...v2.6.0
 [2.5.1]: https://github.com/timberio/timber-ruby/compare/v2.5.0...v2.5.1
