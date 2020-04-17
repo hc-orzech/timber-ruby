@@ -41,6 +41,7 @@ module Timber
                          tags: tags)
           elsif logged_obj.is_a?(Hash)
             # Extract the tags
+            logged_obj = logged_obj.dup
             tags = tags.clone
             tags.push(logged_obj.delete(:tag)) if logged_obj.key?(:tag)
             tags.concat(logged_obj.delete(:tags)) if logged_obj.key?(:tags)
