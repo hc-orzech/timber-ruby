@@ -182,8 +182,6 @@ module Timber
 
       self.level = environment_level
 
-      after_initialize if respond_to?(:after_initialize)
-
       Timber::Config.instance.debug { "Timber::Logger instantiated, level: #{level}, formatter: #{formatter.class}" }
 
       @initialized = true
